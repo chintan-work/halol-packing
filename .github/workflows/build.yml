@@ -1,27 +1,56 @@
-name: Build Windows EXE
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-on:
-  workflow_dispatch:
+  - name: Setup Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: '22.x'
+      cache: 'npm'
 
-jobs:
-  build:
-    runs-on: windows-latest
+  - name: Debug: Node & npm versions
+    run: |
+      node -v
+      npm -v
+      where.exe node || which node || true
+      where.exe npm || which npm || true
+    shell: pwsh
 
-    steps:
-      - uses: actions/checkout@v4
+  - name: Clear npm cache
+    run: npm cache clean --force
+    shell: pwsh
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+  - name: Ensure stable npm
+    run: npm install -g npm@9 || npm install -g npm@8 || true
+    shell: pwsh
 
-      - name: Install dependencies
-        run: npm install
+  - name: Dump latest npm debug log (if present)
+    run: |
+      $logDir = 'C:\npm\cache\_logs'
+      if (Test-Path $logDir) {
+        $latest = Get-ChildItem -Path $logDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($latest) { Get-Content $latest.FullName -Raw } else { Write-Host 'No npm debug logs found' }
+      } else { Write-Host '$logDir not found' }
+    shell: pwsh
 
-      - name: Build application
-        run: npm run dist
+  - name: Install dependencies (try npm ci, fallback to npm install)
+    run: |
+      npm config set loglevel verbose
+      $ErrorActionPreference = 'Stop'
+      try {
+        npm ci --prefer-offline --no-audit --no-fund --unsafe-perm
+      } catch {
+        Write-Host 'npm ci failed -> falling back to npm install'
+        npm install --no-audit --no-fund --unsafe-perm
+      }
+    shell: pwsh
 
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: Halol-Packing
-          path: dist/electron/*.exe
+  - name: Build dist
+    run: npm run dist
+    shell: pwsh
+
+  - name: Upload artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: windows-installer
+      path: dist/**/*.exe
